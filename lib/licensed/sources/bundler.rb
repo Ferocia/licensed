@@ -76,6 +76,8 @@ module Licensed
 
       GEMFILES = %w{Gemfile gems.rb}.freeze
       DEFAULT_WITHOUT_GROUPS = %i{development test}
+      # Gems included with ruby do not have a gemspec
+      STANDARD_GEMS = %w{bigdecimal cmath csv date dbm etc fcntl fiddle fileutils gdbm io-console ipaddr json openssl psych rdoc rubygems scanf sdbm stringio strscan webrick zlib}.freeze
 
       def enabled?
         # running a ruby-packer-built licensed exe when ruby isn't available
@@ -138,9 +140,14 @@ module Licensed
       # Returns a `MissingSpecification` if a gem specification isn't found.
       def specs_for_dependencies(dependencies, source)
         included_dependencies = dependencies.select { |d| include?(d, source) }
+        included_dependencies.reject!{|dep| standard_gem?(dep) }
         included_dependencies.map do |dep|
           gem_spec(dep) || MissingSpecification.new(name: dep.name, requirement: dep.requirement)
         end
+      end
+
+      def standard_gem?(dependency)
+        STANDARD_GEMS.include?(dependency.name)
       end
 
       # Returns a Gem::Specification for the provided gem argument.
