@@ -1,0 +1,24 @@
+name: migration-v2
+
+sources:
+  rubygem: true
+
+reviewed:
+  rubygem:
+    - test
+
+ignored:
+  rubygem:
+    - test
+
+rubygem:
+  value: test
+
+apps:
+  - source_path: "."
+    cache_path: cache
+  - source_path: "."
+    cache_path: cache
+    reviewed:
+      rubygem: # to verify that individual app configurations are updated as well
+        - test

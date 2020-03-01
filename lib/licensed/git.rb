@@ -7,9 +7,18 @@ module Licensed
         @git ||= Licensed::Shell.tool_available?("git")
       end
 
+      # Returns the root of the current git repository
+      # or nil if not in a git repository.
       def repository_root
         return unless available?
-        @root ||= Pathname.new(Licensed::Shell.execute("git", "rev-parse", "--show-toplevel"))
+        root = Licensed::Shell.execute("git", "rev-parse", "--show-toplevel", allow_failure: true)
+        return nil if root.empty?
+        root
+      end
+
+      # Returns true if a git repository is found, false otherwise
+      def git_repo?
+        !repository_root.to_s.empty?
       end
 
       # Returns the most recent git SHA for a file or directory
@@ -17,22 +26,23 @@ module Licensed
       #
       # descriptor - file or directory to retrieve latest SHA for
       def version(descriptor)
-        return unless available? && descriptor
-
-        dir = File.directory?(descriptor) ? descriptor : File.dirname(descriptor)
-        file = File.directory?(descriptor) ? "." : File.basename(descriptor)
-
-        Dir.chdir dir do
-          Licensed::Shell.execute("git", "rev-list", "-1", "HEAD", "--", file, allow_failure: true)
-        end
+        return unless git_repo? && descriptor
+        Licensed::Shell.execute("git", "rev-list", "-1", "HEAD", "--", descriptor, allow_failure: true)
       end
 
       # Returns the commit date for the provided SHA as a timestamp
       #
       # sha - commit sha to retrieve date
       def commit_date(sha)
-        return unless available? && sha
+        return unless git_repo? && sha
         Licensed::Shell.execute("git", "show", "-s", "-1", "--format=%ct", sha)
+      end
+
+      # Returns the files in the git repository from `git ls-files --recurse-submodules`
+      def files
+        return unless git_repo?
+        output = Licensed::Shell.execute("git", "ls-files", "--full-name", "--recurse-submodules")
+        output.lines.map(&:strip)
       end
     end
   end

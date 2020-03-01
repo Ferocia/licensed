@@ -3,7 +3,7 @@ require "test_helper"
 
 describe "licensed" do
   let (:root) { File.expand_path("../../", __FILE__) }
-  let (:config_path) { File.join(root, "test/fixtures/config/.licensed.yml") }
+  let (:config_path) { File.join(root, "test/fixtures/cli/.licensed.yml") }
 
   before do
     Dir.chdir root
@@ -11,20 +11,24 @@ describe "licensed" do
 
   describe "cache" do
     it "exits 0" do
-      _, status = Open3.capture2 "bundle exec exe/licensed cache -c #{config_path} --offline"
+      _, status = Open3.capture2 "bundle exec exe/licensed cache -c #{config_path}"
       assert status.success?
     end
 
     it "exits 1 when a config file isn't found" do
-      _, _, status = Open3.capture3 "bundle exec exe/licensed cache --offline"
-      refute status.success?
+      Dir.mktmpdir do |dir|
+        Dir.chdir dir do
+          _, _, status = Open3.capture3 "bundle exec exe/licensed cache"
+          refute status.success?
+        end
+      end
     end
 
     it "accepts a path to a config file" do
-      out, status = Open3.capture2 "bundle exec exe/licensed cache -c #{config_path} --offline"
+      out, status = Open3.capture2 "bundle exec exe/licensed cache -c #{config_path}"
       refute out =~ /Usage/i
 
-      out, status = Open3.capture2 "bundle exec exe/licensed cache --config #{config_path} --offline"
+      out, status = Open3.capture2 "bundle exec exe/licensed cache --config #{config_path}"
       refute out =~ /Usage/i
     end
   end
@@ -36,8 +40,12 @@ describe "licensed" do
     end
 
     it "exits 1 when a config file isn't found" do
-      _, _, status = Open3.capture3 "bundle exec exe/licensed status"
-      refute status.success?
+      Dir.mktmpdir do |dir|
+        Dir.chdir dir do
+          _, _, status = Open3.capture3 "bundle exec exe/licensed status"
+          refute status.success?
+        end
+      end
     end
 
     it "accepts a path to a config file" do
@@ -56,8 +64,12 @@ describe "licensed" do
     end
 
     it "exits 1 when a config file isn't found" do
-      _, _, status = Open3.capture3 "bundle exec exe/licensed list"
-      refute status.success?
+      Dir.mktmpdir do |dir|
+        Dir.chdir dir do
+          _, _, status = Open3.capture3 "bundle exec exe/licensed list"
+          refute status.success?
+        end
+      end
     end
 
     it "accepts a path to a config file" do
@@ -66,6 +78,27 @@ describe "licensed" do
 
       out, status = Open3.capture2 "bundle exec exe/licensed list --config #{config_path}"
       refute out =~ /Usage/i
+    end
+  end
+
+  describe "version" do
+    it "outputs VERSION constant" do
+      expected_out = "#{Licensed::VERSION}\n"
+      out, status = Open3.capture2 "bundle exec exe/licensed version"
+      assert_equal out, expected_out
+
+      out, status = Open3.capture2 "bundle exec exe/licensed -v"
+      assert_equal out, expected_out
+
+      out, status = Open3.capture2 "bundle exec exe/licensed --version"
+      assert_equal out, expected_out
+    end
+  end
+
+  describe "missing subcommand" do
+    it "exits 1 when a subcommand isn't defined" do
+      _, _, status = Open3.capture3 "bundle exec exe/licensed verify"
+      refute status.success?
     end
   end
 end

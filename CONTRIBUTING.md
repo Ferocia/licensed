@@ -13,8 +13,8 @@ Please note that this project is released with a [Contributor Code of Conduct][c
 
 0. [Fork][fork] and clone the repository
 0. Configure and install the dependencies: `script/bootstrap`
-0. Setup test fixtures: `rake setup`
-0. Make sure the tests pass on your machine: `rake test`
+0. Setup test fixtures: `bundle exec rake setup`
+0. Make sure the tests pass on your machine: `bundle exec rake test`
 0. Create a new branch: `git checkout -b my-branch-name`
 0. Make your change, add tests, and make sure the tests still pass
 0. Push to your fork and [submit a pull request][pr]
@@ -34,7 +34,7 @@ Pull requests that include a new dependency source must also
 - Include [documentation](docs/sources) for the new source and update the [documented source list](README.md#sources).
 - Add a [setup script](script/source-setup) if needed.
 - Include [tests](test/source) and [test fixtures](test/fixtures) needed to verify the source in CI.
-- Add a CI job to [.travis.yml](.travis.yml).
+- Add a CI job to [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Releasing
 If you are the current maintainer of this gem:
@@ -52,6 +52,10 @@ If you are the current maintainer of this gem:
    3. Test behavior locally, branch deploy, whatever needs to happen
 9. Merge github/licensed PR
 10. Tag and push: `git tag x.xx.xx; git push --tags`
+
+The following steps will happen automatically from a GitHub Actions workflow
+after pushing a new tag. In case that fails, the following steps can be performed manually
+
 11. Push to rubygems.org -- `gem push licensed-x.xx.xx.gem`
 12. Build packages for new tag: `VERSION=x.xx.xx bundle exec rake package`
 13. Create release for new tag at github/licensed.

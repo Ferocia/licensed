@@ -27,7 +27,7 @@ task :setup, [:arguments] do |task, args|
   end
 end
 
-sources_search = File.expand_path("lib/licensed/source/*.rb", __dir__)
+sources_search = File.expand_path("lib/licensed/sources/*.rb", __dir__)
 sources = Dir[sources_search].map { |f| File.basename(f, ".*") }
 
 namespace :test do
@@ -44,12 +44,22 @@ namespace :test do
       t.description = "Run #{source} tests"
       t.libs << "test"
       t.libs << "lib"
-
-      # use negative lookahead to exclude all source tests except
-      # the tests for `source`
-      t.test_files = FileList["test/**/*_test.rb"].exclude(/test\/source\/(?!#{source}).*?_test.rb/,
-                                                           "test/fixtures/**/*_test.rb")
+      t.test_files = FileList["test/commands/*_test.rb", "test/sources/#{source}_test.rb"]
     end
+  end
+
+  namespace :core do
+    task :env do
+      ENV["SOURCE"] = ""
+    end
+  end
+
+  Rake::TestTask.new(core: "test:core:env") do |t|
+    t.description = "Run non-source tests"
+    t.libs << "test"
+    t.libs << "lib"
+    t.test_files = FileList["test/**/*_test.rb"].exclude("test/fixtures/**/*_test.rb")
+                                                .exclude("test/sources/*_test.rb")
   end
 end
 
@@ -61,6 +71,7 @@ end
 
 packages_search = File.expand_path("script/packages/*", __dir__)
 platforms = Dir[packages_search].map { |f| File.basename(f, ".*") }
+                                .reject { |f| f == "build" }
 
 namespace :package do
   platforms.each do |platform|

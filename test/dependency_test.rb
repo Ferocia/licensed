@@ -3,152 +3,207 @@ require "test_helper"
 require "tmpdir"
 
 describe Licensed::Dependency do
+  let(:error) { nil }
+
   def mkproject(&block)
     Dir.mktmpdir do |dir|
       Dir.chdir dir do
-        yield Licensed::Dependency.new(dir, {})
+        yield Licensed::Dependency.new(name: "test", version: "1.0", path: dir, errors: [error])
       end
     end
   end
 
-  describe "detect_license!" do
-    it "gets license from license file" do
+  describe "initialize" do
+    it "raises an error if the path argument is not an absolute path" do
+      assert_raises ArgumentError do
+        Licensed::Dependency.new(name: "test", version: "1.0", path: ".")
+      end
+    end
+  end
+
+  describe "record" do
+    it "returns a Licensed::DependencyRecord object with dependency data" do
       mkproject do |dependency|
         File.write "LICENSE", Licensee::License.find("mit").text
-        dependency.detect_license!
-        assert_equal "mit", dependency["license"]
-        assert_match(/MIT License/, dependency.text)
+        File.write "AUTHORS", "author"
+        assert_equal "mit", dependency.record["license"]
+        assert_equal "test", dependency.record["name"]
+        assert_equal "1.0", dependency.version
+        license = dependency.record.licenses.find { |l| l.sources == ["LICENSE"] }
+        assert license
+        assert_equal Licensee::License.find("mit").text, license.text
+        assert_includes dependency.record.notices,
+                        { "sources" => "AUTHORS", "text" => "author" }
       end
     end
 
-    it "gets license from github" do
-      Licensed.use_github = true
+    it "prefers a name given via metadata over the `name` kwarg" do
+      dep = Licensed::Dependency.new(name: "name", version: "1.0", path: Dir.pwd, metadata: { "name" => "meta_name" })
+      assert_equal "meta_name", dep.record["name"]
+    end
+  end
 
-      VCR.use_cassette("sshirokov/csgtool/license") do
-        dependency = Licensed::Dependency.new(Dir.tmpdir, {
-          "homepage" => "https://github.com/sshirokov/csgtool"
-        })
-        dependency.detect_license!
-
-        assert_equal "mit", dependency["license"]
-        assert_match(/Yaroslav Shirokov/, dependency.text)
+  describe "license_key" do
+    it "gets license from license file" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        assert_equal "mit", dependency.license_key
       end
     end
 
     it "gets license from package manager" do
       mkproject do |dependency|
         File.write "project.gemspec", "s.license = 'mit'"
-        dependency.detect_license!
-
-        assert_equal "mit", dependency["license"]
+        assert_equal "mit", dependency.license_key
       end
     end
 
     it "gets license from readme" do
       mkproject do |dependency|
         File.write "README.md", "# License\n" + Licensee::License.find("mit").text
-        dependency.detect_license!
-        assert_equal "mit", dependency["license"]
-        assert_match(/MIT License/, dependency.text)
+        assert_equal "mit", dependency.license_key
       end
     end
 
-    it "pulls license from package manager if LICENSE file is other" do
+    it "package manager does not override if LICENSE file is other" do
       mkproject do |dependency|
         File.write "LICENSE.md", "See project.gemspec"
         File.write "project.gemspec", "s.license = 'mit'"
-        dependency.detect_license!
-
-        assert_equal "mit", dependency["license"]
+        assert_equal "other", dependency.license_key
       end
     end
 
-    it "pulls license from README if LICENSE and package manager are other" do
+    it "gets license from README if package manager has no license assertion" do
       mkproject do |dependency|
         File.write "project.gemspec", "foo"
         File.write "README.md", "# License\n" + Licensee::License.find("mit").text
-        dependency.detect_license!
-
-        assert_equal "mit", dependency["license"]
-        assert_match(/MIT License/, dependency.text)
+        assert_equal "mit", dependency.license_key
       end
     end
 
-    it "pulls license from GitHub if local sources are all other" do
+    it "gets license from multiple license files" do
       mkproject do |dependency|
-        File.write "LICENSE.md", "See README"
-        File.write "project.gemspec", "foo"
-        File.write "README.txt", "# License\n" + "The Remote MIT license"
-        Licensed.use_github = true
+        File.write "LICENSE", Licensee::License.find("mit").text
+        File.write "LICENSE.md", Licensee::License.find("bsd-3-clause").text
 
-        VCR.use_cassette("sshirokov/csgtool/license") do
-          dependency = Licensed::Dependency.new(Dir.tmpdir, {
-            "homepage" => "https://github.com/sshirokov/csgtool"
-          })
-          dependency.detect_license!
-
-          assert_equal "mit", dependency["license"]
-          assert_match(/Yaroslav Shirokov/, dependency.text)
-        end
+        assert_equal "other", dependency.license_key
       end
     end
 
-    it "extracts other legal notices" do
+    it "gets license contents from multiple sources" do
       mkproject do |dependency|
-        File.write "AUTHORS", "authors"
-        File.write "COPYING", "copying"
-        File.write "NOTICE", "notice"
-        File.write "LEGAL", "legal"
+        File.write "LICENSE", Licensee::License.find("mit").text
+        File.write "README.md", "# License\n" + Licensee::License.find("bsd-3-clause").text
+        File.write "project.gemspec", "s.license = 'mit'"
 
-        dependency.detect_license!
-
-        assert_match(/authors/, dependency.text)
-        assert_match(/copying/, dependency.text)
-        assert_match(/notice/, dependency.text)
-        assert_match(/legal/, dependency.text)
-      end
-    end
-
-    it "does not extract empty legal notices" do
-      mkproject do |dependency|
-        File.write "AUTHORS", ""
-        File.write "COPYING", "copying"
-        File.write "NOTICE", ""
-        File.write "LEGAL", "legal"
-
-        dependency.detect_license!
-
-        refute_match(/authors/, dependency.text)
-        assert_match(/copying/, dependency.text)
-        refute_match(/notice/, dependency.text)
-        assert_match(/legal/, dependency.text)
-      end
-    end
-
-    it "always contains a license text section if there are legal notices" do
-      mkproject do |dependency|
-        File.write "AUTHORS", "authors"
-
-        dependency.detect_license!
-
-        # the text should always start with license text (even if empty),
-        # followed by a separator if there are any legal notices
-        assert_match(/\A\n#{Licensed::License::TEXT_SEPARATOR}\n/, dependency.text)
+        assert_equal "other", dependency.license_key
       end
     end
 
     it "sets license to other if undetected" do
       mkproject do |dependency|
         File.write "LICENSE", "some unknown license"
-        dependency.detect_license!
-        assert_equal "other", dependency["license"]
+        assert_equal "other", dependency.license_key
       end
     end
 
     it "sets license to none if no license found" do
       mkproject do |dependency|
-        dependency.detect_license!
-        assert_equal "none", dependency["license"]
+        assert_equal "none", dependency.license_key
+      end
+    end
+  end
+
+  describe "license_contents" do
+    it "gets license content from license file" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        assert_includes dependency.license_contents,
+                        { "sources" => "LICENSE", "text" => Licensee::License.find("mit").text }
+      end
+    end
+
+    it "autogenerates license content if explicit content is not found" do
+      mkproject do |dependency|
+        File.write "project.gemspec", "s.license = 'mit'"
+
+        contents = dependency.license_contents.first
+        assert contents
+        assert_match /auto-generated/i, contents["sources"]
+        refute_match /copyright \(c\)/i, contents["text"]
+
+        file = Licensee::ProjectFiles::LicenseFile.new(contents["text"])
+        assert_equal "mit", file.license&.key
+      end
+    end
+
+    it "does not autogenerate license content for 'other' license key" do
+      mkproject do |dependency|
+        File.write "project.gemspec", "s.license = 'other'"
+
+        assert_empty dependency.license_contents
+      end
+    end
+
+    it "does not autogenerate license content for licenses unknown to Licensee" do
+      mkproject do |dependency|
+        File.write "project.gemspec", "s.license = 'nit'"
+
+        assert_empty dependency.license_contents
+      end
+    end
+
+    it "does not autogenerate license content if license is not found" do
+      mkproject do |dependency|
+        assert_empty dependency.license_contents
+      end
+    end
+
+    it "does not autogenerate license content if explicit content is set" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        refute dependency.license_contents.any? { |c| c["sources"] =~ /auto-generated/i }
+      end
+    end
+
+    it "gets license from readme" do
+      mkproject do |dependency|
+        File.write "README.md", "# License\n" + Licensee::License.find("mit").text
+        assert_includes dependency.license_contents,
+                        { "sources" => "README.md", "text" => Licensee::License.find("mit").text.rstrip }
+      end
+    end
+
+    it "gets license from README if package manager has no license assertion" do
+      mkproject do |dependency|
+        File.write "project.gemspec", "foo"
+        File.write "README.md", "# License\n" + Licensee::License.find("mit").text
+        assert_includes dependency.license_contents,
+                        { "sources" => "README.md", "text" => Licensee::License.find("mit").text.rstrip }
+      end
+    end
+
+    it "gets license content from multiple license files" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        File.write "LICENSE.md", Licensee::License.find("bsd-3-clause").text
+
+        assert_includes dependency.license_contents,
+                        { "sources" => "LICENSE", "text" => Licensee::License.find("mit").text }
+        assert_includes dependency.license_contents,
+                        { "sources" => "LICENSE.md", "text" => Licensee::License.find("bsd-3-clause").text }
+      end
+    end
+
+    it "gets license content from multiple sources" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        File.write "README.md", "# License\n" + Licensee::License.find("bsd-3-clause").text
+
+        assert_includes dependency.license_contents,
+                        { "sources" => "LICENSE", "text" => Licensee::License.find("mit").text }
+        assert_includes dependency.license_contents,
+                        { "sources" => "README.md", "text" => Licensee::License.find("bsd-3-clause").text.rstrip }
       end
     end
 
@@ -159,13 +214,106 @@ describe Licensed::Dependency do
 
           Dir.mkdir "dependency"
           Dir.chdir "dependency" do
-            dep = Licensed::Dependency.new(Dir.pwd, "search_root" => File.expand_path(".."))
-            dep.detect_license!
-
-            assert_equal "license", dep.text
+            dep = Licensed::Dependency.new(name: "test", version: "1.0", path: Dir.pwd, search_root: File.expand_path(".."))
+            source = Pathname.new(dir).basename.join("LICENSE").to_path
+            assert_includes dep.license_contents,
+                            { "sources" => source, "text" => "license" }
           end
         end
       end
+    end
+
+    it "attributes the same content to multiple sources" do
+      mkproject do |dependency|
+        File.write "LICENSE", Licensee::License.find("mit").text
+        File.write "LICENSE.md", Licensee::License.find("mit").text
+
+        assert_includes dependency.license_contents,
+                        { "sources" => "LICENSE, LICENSE.md", "text" => Licensee::License.find("mit").text }
+      end
+    end
+  end
+
+  describe "notice_contents" do
+    it "extracts legal notices" do
+      mkproject do |dependency|
+        File.write "AUTHORS", "authors"
+        File.write "NOTICE", "notice"
+        File.write "LEGAL", "legal"
+
+        assert_includes dependency.notice_contents,
+                        { "sources" => "AUTHORS", "text" => "authors" }
+        assert_includes dependency.notice_contents,
+                        { "sources" => "NOTICE", "text" => "notice" }
+        assert_includes dependency.notice_contents,
+                        { "sources" => "LEGAL", "text" => "legal" }
+      end
+    end
+
+    it "does not extract empty legal notices" do
+      mkproject do |dependency|
+        File.write "AUTHORS", ""
+        File.write "NOTICE", ""
+        File.write "LEGAL", "legal"
+
+        refute_includes dependency.notice_contents,
+                        { "sources" => "AUTHORS", "text" => "authors" }
+        refute_includes dependency.notice_contents,
+                        { "sources" => "NOTICE", "text" => "notice" }
+        assert_includes dependency.notice_contents,
+                        { "sources" => "LEGAL", "text" => "legal" }
+      end
+    end
+
+    it "handles invlaid encodings in legal notices" do
+      mkproject do |dependency|
+        File.write "AUTHORS", [0x20, 0x42, 0x3f, 0x63, 0x6b].pack("ccccc")
+        File.write "NOTICE", "notice"
+        File.write "LEGAL", "legal"
+
+        assert_includes dependency.notice_contents,
+                        { "sources" => "AUTHORS", "text" => " B?ck" }
+        assert_includes dependency.notice_contents,
+                        { "sources" => "NOTICE", "text" => "notice" }
+        assert_includes dependency.notice_contents,
+                        { "sources" => "LEGAL", "text" => "legal" }
+      end
+    end
+  end
+
+  describe "error?" do
+    it "returns true if a dependency has an error" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: Dir.pwd, errors: ["error"])
+      assert dep.errors?
+    end
+
+    it "returns false if a dependency does not have an error" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: Dir.pwd)
+      refute dep.errors?
+    end
+  end
+
+  describe "path" do
+    it "returns the configured dependency path" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: Dir.pwd)
+      assert_equal Dir.pwd, dep.path.to_s
+    end
+  end
+
+  describe "exist?" do
+    it "returns true if the configured dependency path exists" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: Dir.pwd)
+      assert dep.exist?
+    end
+
+    it "returns true if the configured search root exists" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: File.join(Dir.pwd, "non-exist"), search_root: Dir.pwd)
+      assert dep.exist?
+    end
+
+    it "returns false if neither the search root or configured path exists" do
+      dep = Licensed::Dependency.new(name: "test", version: "1.0", path: File.join(Dir.pwd, "non-exist"))
+      refute dep.exist?
     end
   end
 end

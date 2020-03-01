@@ -4,6 +4,21 @@ A configuration file specifies the details of enumerating and operating on licen
 
 Configuration can be specified in either YML or JSON formats.  Examples below are given in YML.
 
+## Configuration Paths
+
+`licensed` requires a path to enumerate dependencies at (`source_path`) and a path to store cached metadata (`cache_path`).
+
+To determine these paths across multiple environments where absolute paths will differ, a known root path is needed to evaluate relative paths against.
+In using a root, relative source and cache paths can be specified in the configuration file.
+
+When using a configuration file, the root property can be set as either a path that can be expanded from the configuration file directory using `File.expand_path`, or the value `true` to use the configuration file directory as the root.
+
+When creating a `Licensed::Dependency` manually with a `root` property, the property must be an absolute path - no path expansion will occur.
+
+If a root path is not specified, it will default to using the following, in order of precedence
+1. the root of the local git repository, if run inside a git repository
+2. the current directory
+
 ## Restricting sources
 
 The `sources` configuration property specifies which sources `licensed` will use to enumerate dependencies.
@@ -17,7 +32,7 @@ it may still determine that it can't enumerate dependencies for a project.
 ```yml
 sources:
   bower: true
-  rubygem: false
+  bundler: false
 ```
 
 `licensed` determines which sources will try to enumerate dependencies based on the following rules:
@@ -44,11 +59,16 @@ Configuration can be set up for single or multiple applications in the same repo
 # If not set, defaults to the directory name of `source_path`
 name: 'My application'
 
-# Path is relative to git repository root
+# Path is relative to the location of the configuration file and specifies
+# the root to expand all paths from
+# If not set, defaults to a git repository root
+root: 'relative/path/from/configuration/file/directory'
+
+# Path is relative to configuration root and specifies where cached metadata will be stored.
 # If not set, defaults to '.licenses'
 cache_path: 'relative/path/to/cache'
 
-# Path is relative to git repository root and specifies the working directory when enumerating dependencies
+# Path is relative to configuration root and specifies the working directory when enumerating dependencies
 # Optional for single app configuration, required when specifying multiple apps
 # Defaults to current directory when running `licensed`
 source_path: 'relative/path/to/source'
@@ -56,27 +76,44 @@ source_path: 'relative/path/to/source'
 # Sources of metadata
 sources:
   bower: true
-  rubygem: false
+  bundler: false
 
-# Dependencies with these licenses are allowed by default.
+# Dependencies with these licenses are allowed and will not raise errors or warnings.
+# This list does not have a default value and is required for `licensed status`
+# to succeed.
 allowed:
   - mit
   - apache-2.0
   - bsd-2-clause
   - bsd-3-clause
   - cc0-1.0
+  - isc
 
-# These dependencies are explicitly ignored.
+# These dependencies are ignored during enumeration.
+# They will not be cached, and will not raise errors or warnings.
+# This configuration is intended to be used for dependencies that don't need to
+# be included for compliance purposes, such as other projects owned by the current
+# project's owner, internal dependencies, and dependencies that aren't shipped with
+# the project like test frameworks.
 ignored:
-  rubygem:
+  bundler:
     - some-internal-gem
 
   bower:
     - some-internal-package
 
-# These dependencies have been reviewed.
+  go:
+    # ignore all go packages from import paths starting with github.com/internal-package
+    # see the `File.fnmatch?` documentation for details on how patterns are matched.
+    # comparisons use the FNM_CASEFOLD and FNM_PATHNAME flags
+    - github.com/internal-package/**/*
+
+# These dependencies have licenses not on the `allowed` list and have been reviewed.
+# They will be cached and checked, but will not raise errors or warnings for a
+# non-allowed license.  Dependencies on this list will still raise errors if
+# license text cannot be found for the dependency.
 reviewed:
-  rubygem:
+  bundler:
     - bcrypt-ruby
 
   bower:
@@ -102,14 +139,14 @@ Here are some examples:
 ```yml
 sources:
   go: true
-  rubygem: false
+  bundler: false
 
 ignored:
-  rubygem:
+  bundler:
     - some-internal-gem
 
 reviewed:
-  rubygem:
+  bundler:
     - bcrypt-ruby
 
 cache_path: 'path/to/cache'
@@ -117,7 +154,7 @@ apps:
   - source_path: 'path/to/app1'
   - source_path: 'path/to/app2'
     sources:
-      rubygem: true
+      bundler: true
       go: false
 ```
 

@@ -1,16 +1,39 @@
 # Licensed
 
-Licensed is a Ruby gem to cache the licenses of dependencies and check their status.
+Licensed caches the licenses of dependencies and checks their status.
+
+Licensed is available as a Ruby gem for Ruby environments, and as a self-contained executable for non-Ruby environments.
 
 Licensed is **not** a complete open source license compliance solution. Please understand the important [disclaimer](#disclaimer) below to make appropriate use of Licensed.
 
 ## Current Status
 
-[![Build Status](https://travis-ci.org/github/licensed.svg?branch=master)](https://travis-ci.org/github/licensed)
+![Build status](https://github.com/github/licensed/workflows/Test/badge.svg)
 
 Licensed is in active development and currently used at GitHub.  See the [open issues](https://github.com/github/licensed/issues) for a list of potential work.
 
+## Licensed v2
+
+Licensed v2 includes many internal changes intended to make licensed more extensible and easier to update in the future.  While not too much has changed externally, v2 is incompatible with configuration files and cached records from previous versions.  Fortunately, migrating is easy using the `licensed migrate` command.
+
+See [CHANGELOG.md](./CHANGELOG.md) for more details on what's changed.
+See the [migration documentation](./docs/migrating_to_newer_versions.md) for more info on migrating to v2, or run `licensed help migrate`.
+
 ## Installation
+
+### Dependencies
+
+Licensed uses the `libgit2` bindings for Ruby provided by `rugged`. `rugged` requires `cmake` and `pkg-config` which you may need to install before you can install Licensed.
+   
+   >  Ubuntu
+    
+    sudo apt-get install cmake pkg-config
+    
+   >  OS X
+       
+    brew install cmake pkg-config
+
+### With a Gemfile
 
 Add this line to your application's Gemfile:
 
@@ -24,42 +47,44 @@ And then execute:
 $ bundle
 ```
 
-#### Dependencies
+### As an executable
 
-Licensed uses the the `libgit2` bindings for Ruby provided by `rugged`. `rugged` has its own dependencies - `cmake` and `pkg-config` - which you may need to install before you can install Licensed.
+Download a package from GitHub and extract the executable.  Executable packages are available for each release starting with version 1.2.0.
 
-For example, on macOS with Homebrew: `brew install cmake pkg-config` and on Ubuntu: `apt-get install cmake pkg-config`.
+```bash
+$ curl -sSL https://github.com/github/licensed/releases/download/<version>/licensed-<version>-<os>-x64.tar.gz > licensed.tar.gz
+$ tar -xzf licensed.tar.gz
+$ rm -f licensed.tar.gz
+$ ./licensed list
+```
+
+For system wide usage, install licensed to a location on `$PATH`, e.g. `/usr/local/bin`.
 
 ## Usage
 
 - `licensed list`: Output enumerated dependencies only.
-
 - `licensed cache`: Cache licenses and metadata.
-
 - `licensed status`: Check status of dependencies' cached licenses. For example:
+- `licensed version`: Show current installed version of Licensed. Aliases: `-v|--version`
 
-```
-$ bundle exec licensed status
-Checking licenses for 3 dependencies
+See the [commands documentation](./docs/commands.md) for additional documentation, or run `licensed -h` to see all of the current available commands.
 
-Warnings:
+### Automation
 
-.licenses/rubygem/bundler.txt:
-  - license needs reviewed: mit.
+#### Bundler
 
-.licenses/rubygem/licensee.txt:
-  - cached license data missing
+The [bundler-licensed plugin](https://github.com/sergey-alekseev/bundler-licensed) runs `licensed cache` automatically when using `bundler`.  See the linked repo for usage and details.
 
-.licenses/bower/jquery.txt:
-  - license needs reviewed: mit.
-  - cached license data out of date
+#### GitHub Actions
 
-3 dependencies checked, 3 warnings found.
-```
+The [licensed-ci](https://github.com/marketplace/actions/licensed-ci) GitHub Action runs `licensed` as part of an opinionated CI workflow and can be configured to run on any GitHub Action event.  See the linked actions for usage and details.
+
+The [setup-licensed](https://github.com/marketplace/actions/setup-github-licensed) GitHub Action installs `licensed` to the workflow environment.  See the linked actions for usage and details.
+   - This action is intended for projects that don't have a ruby installation setup.  If your workflow has ruby setup please install `licensed` via `Gemfile` + `bundle install` or with `gem install`.
 
 ### Configuration
 
-All commands accept a `-c|--config` option to specify a path to a configuration file or directory.
+All commands, except `version`, accept a `-c|--config` option to specify a path to a configuration file or directory.
 
 If a directory is specified, `licensed` will look in that directory for a file named (in order of preference):
 1. `.licensed.yml`
@@ -72,21 +97,26 @@ See the [configuration file documentation](./docs/configuration.md) for more det
 
 ### Sources
 
-Dependencies will be automatically detected for
+Dependencies will be automatically detected for all of the following sources by default.
 1. [Bower](./docs/sources/bower.md)
-2. [Bundler (rubygem)](./docs/sources/bundler.md)
-3. [Cabal](./docs/sources/cabal.md)
-4. [Go](./docs/sources/go.md)
-5. [Go Dep](./docs/sources/dep.md)
-6. [Manifest lists](./docs/sources/manifests.md)
-7. [NPM](./docs/sources/npm.md)
-8. [Pip](./docs/source/pip.md)
+1. [Bundler](./docs/sources/bundler.md)
+1. [Cabal](./docs/sources/cabal.md)
+1. [Composer](./docs/sources/composer.md)
+1. [Go](./docs/sources/go.md)
+1. [Go Dep (dep)](./docs/sources/dep.md)
+1. [Manifest lists (manifests)](./docs/sources/manifests.md)
+1. [NPM](./docs/sources/npm.md)
+1. [Pip](./docs/sources/pip.md)
+1. [Pipenv](./docs/sources/pipenv.md)
+1. [Git Submodules (git_submodule)](./docs/sources/git_submodule.md)
+1. [Mix](./docs/sources/mix.md)
+1. [Yarn](./docs/sources/yarn.md)
 
 You can disable any of them in the configuration file:
 
 ```yml
 sources:
-  rubygem: false
+  bundler: false
   npm: false
   bower: false
   cabal: false
@@ -118,9 +148,11 @@ if Licensed::Shell.tool_available?('bundle')
 end
 ```
 
-## Packaging
+See the [documentation on adding new sources](./docs/adding_a_new_source.md) for more information.
 
-Licensed can be built into an exe and packaged for distribution to systems that don't have ruby already available.  See the [packaging documentation](./docs/packaging.md) for details.
+#### Adding Commands
+
+See the [documentation on commands](./docs/commands.md) for information about adding a new CLI command.
 
 ## Contributing
 

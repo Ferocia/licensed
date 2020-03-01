@@ -2,117 +2,159 @@
 require "licensee"
 
 module Licensed
-  class Dependency < License
-    LEGAL_FILES = /\A(AUTHORS|COPYING|NOTICE|LEGAL)(?:\..*)?\z/i
+  class Dependency < Licensee::Projects::FSProject
+    LEGAL_FILES_PATTERN = /(AUTHORS|NOTICE|LEGAL)(?:\..*)?\z/i
 
+    attr_reader :name
+    attr_reader :version
+    attr_reader :errors
     attr_reader :path
-    attr_reader :search_root
 
-    def initialize(path, metadata = {})
-      @search_root = metadata.delete("search_root")
-      super metadata
+    # Create a new project dependency
+    #
+    # name        - unique dependency name
+    # version     - dependency version
+    # path        - absolute file path to the dependency, to find license contents
+    # search_root - (optional) the root location to search for dependency license contents
+    # metadata    - (optional) additional dependency data to cache
+    # errors      - (optional) errors encountered when evaluating dependency
+    #
+    # Returns a new dependency object.  Dependency metadata and license contents
+    # are available if no errors are set on the dependency.
+    def initialize(name:, version:, path:, search_root: nil, metadata: {}, errors: [])
+      @name = name
+      @version = version
+      @metadata = metadata
+      @errors = errors
+      path = path.to_s
+      @path = path
 
-      self.path = path
-    end
-
-    # Returns a Licensee::Projects::FSProject for the dependency path
-    def project
-      @project ||= Licensee::Projects::FSProject.new(path, search_root: search_root, detect_packages: true, detect_readme: true)
-    end
-
-    # Sets the path to source dependency license information
-    def path=(path)
       # enforcing absolute paths makes life much easier when determining
       # an absolute file path in #notices
-      unless Pathname.new(path).absolute?
-        raise "Dependency path #{path} must be absolute"
+      if File.exist?(path) && !Pathname.new(path).absolute?
+        # this is an internal error related to source implementation and
+        # should be raised, not stored to be handled by reporters
+        raise ArgumentError, "dependency path #{path} must be absolute"
       end
 
-      @path = path
-      reset_license!
+      super(path, search_root: search_root, detect_readme: true, detect_packages: true)
     end
 
-    # Detects license information and sets it on this dependency object.
-    #  After calling `detect_license!``, the license is set at
-    # `dependency["license"]` and legal text is set to `dependency.text`
-    def detect_license!
-      self["license"] = license_key
-      self.text = [license_text, *notices].join("\n" + TEXT_SEPARATOR + "\n").rstrip
+    # Returns whether the dependency exists locally
+    def exist?
+      # some types of dependencies won't necessarily have a path that exists,
+      # but they can still find license contents between the given path and
+      # the search root
+      # @root is defined
+      File.exist?(path) || File.exist?(@root)
     end
 
-    # Extract legal notices from the dependency source
-    def notices
-      local_files.uniq # unique local file paths
-           .sort # sorted by the path
-           .map { |f| File.read(f) } # read the file contents
-           .map(&:rstrip) # strip whitespace
-           .select { |t| t.length > 0 } # files with content only
+    # Returns true if the dependency has any errors, false otherwise
+    def errors?
+      errors.any?
     end
 
-    # Returns an array of file paths used to locate legal notices
-    def local_files
-      return [] unless Dir.exist?(path)
+    # Returns a record for this dependency including metadata and legal contents
+    def record
+      @record ||= DependencyRecord.new(
+        metadata: license_metadata,
+        licenses: license_contents,
+        notices: notice_contents
+      )
+    end
 
-      Dir.foreach(path).map do |file|
-        next unless file.match(LEGAL_FILES)
+    # Returns a string representing the dependencys license
+    def license_key
+      return "none" unless license
+      license.key
+    end
 
-        file_path = File.join(path, file)
-        next unless File.file?(file_path)
+    # Returns the license text content from all matched sources
+    # except the package file, which doesn't contain license text.
+    def license_contents
+      files = matched_files.reject { |f| f == package_file }
+                           .group_by(&:content)
+                           .map { |content, files| { "sources" => license_content_sources(files), "text" => content } }
 
-        file_path
-      end.compact
+      files << generated_license_contents if files.empty?
+      files.compact
+    end
+
+    # Returns legal notices found at the dependency path
+    def notice_contents
+      Dir.glob(dir_path.join("*"))
+         .grep(LEGAL_FILES_PATTERN)
+         .select { |path| File.file?(path) }
+         .sort # sorted by the path
+         .map { |path| { "sources" => normalize_source_path(path), "text" => read_file_with_encoding_check(path) } }
+         .select { |notice| notice["text"].length > 0 } # files with content only
     end
 
     private
 
-    # Resets all local project and license information
-    def reset_license!
-      @project = nil
-      @matched_project_file = nil
-      self.delete("license")
-      self.text = nil
+    def read_file_with_encoding_check(file_path)
+      File.read(file_path).encode("UTF-16", invalid: :replace, replace: "?").encode("UTF-8").rstrip
     end
 
-    # Returns the Licensee::ProjectFile representing the matched_project_file
-    # or remote_license_file
-    def project_file
-      matched_project_file || remote_license_file
-    end
+    # Returns the sources for a group of license file contents
+    #
+    # Sources are returned as a single string with sources separated by ", "
+    def license_content_sources(files)
+      paths = Array(files).map do |file|
+        next file[:uri] if file[:uri]
 
-    # Returns the Licensee::LicenseFile, Licensee::PackageManagerFile, or
-    # Licensee::ReadmeFile with a matched license, in that order or nil
-    # if no license file matched a known license
-    def matched_project_file
-      @matched_project_file ||= project.matched_files
-                                       .select { |f| f.license && !f.license.other? }
-                                       .first
-    end
-
-    # Returns a Licensee::LicenseFile with the content of the license in the
-    # dependency's repository to account for LICENSE files not being distributed
-    def remote_license_file
-      return @remote_license_file if defined?(@remote_license_file)
-      @remote_license_file = Licensed.from_github(self["homepage"])
-    end
-
-    # Regardless of the license detected, try to pull the license content
-    # from the local LICENSE, remote LICENSE, or the README, in that order
-    def license_text
-      content_file = project.license_file || remote_license_file || project.readme_file
-      content_file.content if content_file
-    end
-
-    # Returns a string representing the project's license
-    # Note, this will be "other" if a license file was found but the license
-    # could not be identified and "none" if no license file was found at all
-    def license_key
-      if project_file && project_file.license
-        project_file.license.key
-      elsif project.license_file || remote_license_file
-        "other"
-      else
-        "none"
+        path = dir_path.join(file[:dir], file[:name])
+        normalize_source_path(path)
       end
+
+      paths.join(", ")
+    end
+
+    def normalize_source_path(path)
+      path = Pathname.new(path) unless path.is_a?(Pathname)
+      if path.fnmatch?(dir_path.join("**").to_path)
+        # files under the dependency path return the relative path to the file
+        path.relative_path_from(dir_path).to_path
+      else
+        # otherwise return the source_path as the immediate parent folder name
+        # joined with the file name
+        path.dirname.basename.join(path.basename).to_path
+      end
+    end
+
+    # Returns the metadata that represents this dependency.  This metadata
+    # is written to YAML in the dependencys cached text file
+    def license_metadata
+      {
+        # can be overriden by values in @metadata
+        "name" => name,
+        "version" => version
+      }.merge(
+        @metadata
+      ).merge({
+        # overrides all other values
+        "license" => license_key
+      })
+    end
+
+    # Returns a generated license content source and text for the dependency's
+    # license if it exists and is not "other"
+    def generated_license_contents
+      return unless license
+      return if license.key == "other"
+
+      # strip copyright clauses and any extra newlines
+      # many package managers don't provide enough information to
+      # autogenerate a copyright clause
+      text = license.text.lines
+                         .reject { |l| l =~ Licensee::Matchers::Copyright::REGEX }
+                         .join
+                         .gsub(/\n\n\n/, "\n\n")
+
+      {
+        "sources" => "Auto-generated #{license.spdx_id} license text",
+        "text" => text
+      }
     end
   end
 end

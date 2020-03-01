@@ -4,41 +4,49 @@ require "pathname"
 module Licensed
   class AppConfiguration < Hash
     DEFAULT_CACHE_PATH = ".licenses".freeze
-    DEFAULT_CONFIG_FILES = [
-      ".licensed.yml".freeze,
-      ".licensed.yaml".freeze,
-      ".licensed.json".freeze
-    ].freeze
-    SOURCE_TYPES = Source.constants.map { |c| Source.const_get(c) }.freeze
+
+    # Returns the root for a configuration in following order of precendence:
+    # 1. explicitly configured "root" property
+    # 2. a found git repository root
+    # 3. the current directory
+    def self.root_for(configuration)
+      configuration["root"] || Licensed::Git.repository_root || Dir.pwd
+    end
 
     def initialize(options = {}, inherited_options = {})
       super()
 
       # update order:
       # 1. anything inherited from root config
-      # 2. app defaults
-      # 3. explicitly configured app settings
+      # 2. explicitly configured app settings
       update(inherited_options)
-      update(defaults_for(options, inherited_options))
       update(options)
+      verify_arg "source_path"
 
       self["sources"] ||= {}
       self["reviewed"] ||= {}
       self["ignored"] ||= {}
       self["allowed"] ||= []
+      self["root"] = AppConfiguration.root_for(self)
+      # defaults to the directory name of the source path if not set
+      self["name"] ||= File.basename(self["source_path"])
+      # setting the cache path might need a valid app name
+      self["cache_path"] = detect_cache_path(options, inherited_options)
+    end
 
-      verify_arg "source_path"
-      verify_arg "cache_path"
+    # Returns the path to the workspace root as a Pathname.
+    def root
+      @root ||= Pathname.new(self["root"])
     end
 
     # Returns the path to the app cache directory as a Pathname
     def cache_path
-      Licensed::Git.repository_root.join(self["cache_path"])
+      root.join(self["cache_path"])
     end
 
     # Returns the path to the app source directory as a Pathname
     def source_path
-      Licensed::Git.repository_root.join(self["source_path"])
+      root.join(self["source_path"])
     end
 
     def pwd
@@ -47,9 +55,9 @@ module Licensed
 
     # Returns an array of enabled app sources
     def sources
-      @sources ||= SOURCE_TYPES.select { |source_class| enabled?(source_class.type) }
-                               .map { |source_class| source_class.new(self) }
-                               .select(&:enabled?)
+      @sources ||= Licensed::Sources::Source.sources
+                                            .select { |source_class| enabled?(source_class.type) }
+                                            .map { |source_class| source_class.new(self) }
     end
 
     # Returns whether a source type is enabled
@@ -66,12 +74,14 @@ module Licensed
 
     # Is the given dependency ignored?
     def ignored?(dependency)
-      Array(self["ignored"][dependency["type"]]).include?(dependency["name"])
+      Array(self["ignored"][dependency["type"]]).any? do |pattern|
+        File.fnmatch?(pattern, dependency["name"], File::FNM_PATHNAME | File::FNM_CASEFOLD)
+      end
     end
 
     # Is the license of the dependency allowed?
-    def allowed?(dependency)
-      Array(self["allowed"]).include?(dependency["license"])
+    def allowed?(license)
+      Array(self["allowed"]).include?(license)
     end
 
     # Ignore a dependency
@@ -89,13 +99,17 @@ module Licensed
       self["allowed"] << license
     end
 
-    def defaults_for(options, inherited_options)
-      name = options["name"] || File.basename(options["source_path"])
+    private
+
+    # Returns the cache path for the application based on:
+    # 1. An explicitly set cache path for the application, if set
+    # 2. An inherited root cache path joined with the app name
+    # 3. The default cache path joined with the app name
+    def detect_cache_path(options, inherited_options)
+      return options["cache_path"] unless options["cache_path"].to_s.empty?
+
       cache_path = inherited_options["cache_path"] || DEFAULT_CACHE_PATH
-      {
-        "name" => name,
-        "cache_path" => File.join(cache_path, name)
-      }
+      File.join(cache_path, self["name"])
     end
 
     def verify_arg(property)
@@ -105,10 +119,17 @@ module Licensed
     end
   end
 
-  class Configuration < AppConfiguration
+  class Configuration
+    DEFAULT_CONFIG_FILES = [
+      ".licensed.yml".freeze,
+      ".licensed.yaml".freeze,
+      ".licensed.json".freeze
+    ].freeze
+
     class LoadError < StandardError; end
 
-    attr_accessor :ui
+    # An array of the applications in this licensed configuration.
+    attr_reader :apps
 
     # Loads and returns a Licensed::Configuration object from the given path.
     # The path can be relative or absolute, and can point at a file or directory.
@@ -121,20 +142,9 @@ module Licensed
     end
 
     def initialize(options = {})
-      @ui = Licensed::UI::Shell.new
-
       apps = options.delete("apps") || []
-      super(default_options.merge(options))
-
-      self["apps"] = apps.map { |app| AppConfiguration.new(app, options) }
-    end
-
-    # Returns an array of the applications for this licensed configuration.
-    # If the configuration did not explicitly configure any applications,
-    # return self as an application configuration.
-    def apps
-      return [self] if self["apps"].empty?
-      self["apps"]
+      apps << default_options.merge(options) if apps.empty?
+      @apps = apps.map { |app| AppConfiguration.new(app, options) }
     end
 
     private
@@ -158,7 +168,7 @@ module Licensed
       return {} unless config_path.file?
 
       extension = config_path.extname.downcase.delete "."
-      case extension
+      config = case extension
       when "json"
         JSON.parse(File.read(config_path))
       when "yml", "yaml"
@@ -166,13 +176,30 @@ module Licensed
       else
         raise LoadError, "Unknown file type #{extension} for #{config_path}"
       end
+
+      expand_config_roots(config, config_path)
+      config
+    end
+
+    # Expand any roots specified in a configuration file based on the configuration
+    # files directory.
+    def self.expand_config_roots(config, config_path)
+      if config["root"] == true
+        config["root"] = File.dirname(config_path)
+      elsif config["root"]
+        config["root"] = File.expand_path(config["root"], File.dirname(config_path))
+      end
+
+      if config["apps"]&.any?
+        config["apps"].each { |app_config| expand_config_roots(app_config, config_path) }
+      end
     end
 
     def default_options
       # manually set a cache path without additional name
       {
         "source_path" => Dir.pwd,
-        "cache_path" => DEFAULT_CACHE_PATH
+        "cache_path" => AppConfiguration::DEFAULT_CACHE_PATH
       }
     end
   end
